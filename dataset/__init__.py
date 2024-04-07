@@ -7,6 +7,7 @@ from dataset.caption_dataset import re_train_dataset, re_eval_dataset, pretrain_
 from dataset.nlvr_dataset import nlvr_dataset
 from dataset.ve_dataset import ve_dataset
 from dataset.vqa_dataset import vqa_dataset
+from dataset.clove_dataset import clove_dataset
 from dataset.grounding_dataset import grounding_dataset
 
 from dataset.randaugment import RandomAugment
@@ -51,6 +52,17 @@ def create_dataset(dataset, config):
         train_dataset = vqa_dataset(config['train_file'], train_transform, config['vqa_root'], config['vg_root'], split='train') 
         vqa_test_dataset = vqa_dataset(config['test_file'], test_transform, config['vqa_root'], config['vg_root'], split='test', answer_list=config['answer_list'])       
         return train_dataset, vqa_test_dataset
+
+    elif dataset=='clove_scene':
+        train_dataset = []
+        test_dataset = []
+        vqa_root = '/project/rostamim_919/caiyulia/LAVIS_Modified/cache/coco/images/'
+        vg_root = '/root/CLOVE/image/'
+        task = ['a','b','c','d','e','f']
+        for t in task:
+            train_dataset.append(clove_dataset(config['train_file'], train_transform, vqa_root, vg_root, split='train',SorF='s', sub_data=t, answer_list=config['answer_list']))
+            test_dataset.append(clove_dataset(config['test_file'], test_transform, vqa_root, vg_root, split='test', answer_list=config['answer_list'],SorF='s', sub_data=t))
+        return train_dataset, test_dataset
 
     elif dataset=='nlvr':   
         train_dataset = nlvr_dataset(config['train_file'], train_transform, config['image_root'])  
