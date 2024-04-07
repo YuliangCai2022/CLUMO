@@ -869,7 +869,7 @@ class BertModel(BertPreTrainedModel):
 
     @add_start_docstrings_to_model_forward(BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
-        tokenizer_class=_TOKENIZER_FOR_DOC,
+        #tokenizer_class=_TOKENIZER_FOR_DOC,
         checkpoint="bert-base-uncased",
         output_type=BaseModelOutputWithPoolingAndCrossAttentions,
         config_class=_CONFIG_FOR_DOC,
@@ -1225,7 +1225,10 @@ class BertLMHeadModel(BertPreTrainedModel):
         mode='multi_modal',
         soft_labels=None,
         alpha=0,
-        return_logits=False,        
+        return_logits=False,   
+        classifiers=None,
+        classifier_idx=None,
+        CL_method=None,
     ):
         r"""
         encoder_hidden_states  (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length, hidden_size)`, `optional`):
@@ -1282,7 +1285,23 @@ class BertLMHeadModel(BertPreTrainedModel):
         )
         
         sequence_output = outputs[0]
+        '''prediction_list = []
+        #if EG_classifier is not None:
+        divider = 0
+       
+        if sequence_output.shape[0] > 100:
+            divider = sequence_output.shape[0] // classifier_idx.shape[0]
+        else:
+            divider = 1
+        for i in range(sequence_output.shape[0]//divider):
+            prediction_list.append(classifiers[str(classifier_idx[0][0].item())](sequence_output[i*divider:i*divider+divider,:,:]))
+        prediction_scores = torch.cat(prediction_list,dim=0)'''
+        #else:
+        #if CL_method == 'dual_cluster':
+        #    prediction_scores = classifiers[classifier_idx](sequence_output)
+        #else:
         prediction_scores = self.cls(sequence_output)
+
         
         if return_logits:
             return prediction_scores[:, :-1, :].contiguous()  
@@ -1362,7 +1381,7 @@ class BertForMaskedLM(BertPreTrainedModel):
 
     @add_start_docstrings_to_model_forward(BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
-        tokenizer_class=_TOKENIZER_FOR_DOC,
+        #tokenizer_class=_TOKENIZER_FOR_DOC,
         checkpoint="bert-base-uncased",
         output_type=MaskedLMOutput,
         config_class=_CONFIG_FOR_DOC,
@@ -1567,7 +1586,7 @@ class BertForSequenceClassification(BertPreTrainedModel):
 
     @add_start_docstrings_to_model_forward(BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
-        tokenizer_class=_TOKENIZER_FOR_DOC,
+        #tokenizer_class=_TOKENIZER_FOR_DOC,
         checkpoint="bert-base-uncased",
         output_type=SequenceClassifierOutput,
         config_class=_CONFIG_FOR_DOC,
@@ -1651,7 +1670,7 @@ class BertForMultipleChoice(BertPreTrainedModel):
 
     @add_start_docstrings_to_model_forward(BERT_INPUTS_DOCSTRING.format("batch_size, num_choices, sequence_length"))
     @add_code_sample_docstrings(
-        tokenizer_class=_TOKENIZER_FOR_DOC,
+        #tokenizer_class=_TOKENIZER_FOR_DOC,
         checkpoint="bert-base-uncased",
         output_type=MultipleChoiceModelOutput,
         config_class=_CONFIG_FOR_DOC,
@@ -1746,7 +1765,7 @@ class BertForTokenClassification(BertPreTrainedModel):
 
     @add_start_docstrings_to_model_forward(BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
-        tokenizer_class=_TOKENIZER_FOR_DOC,
+        #tokenizer_class=_TOKENIZER_FOR_DOC,
         checkpoint="bert-base-uncased",
         output_type=TokenClassifierOutput,
         config_class=_CONFIG_FOR_DOC,
@@ -1836,7 +1855,7 @@ class BertForQuestionAnswering(BertPreTrainedModel):
 
     @add_start_docstrings_to_model_forward(BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
-        tokenizer_class=_TOKENIZER_FOR_DOC,
+        #tokenizer_class=_TOKENIZER_FOR_DOC,
         checkpoint="bert-base-uncased",
         output_type=QuestionAnsweringModelOutput,
         config_class=_CONFIG_FOR_DOC,
