@@ -18,7 +18,6 @@ import math
 from models.model_vqa import ALBEF
 from models.vit import interpolate_pos_embed
 from models.tokenization_bert import BertTokenizer
-from ExperienceReplay import ExperienceReplayMemory
 
 import utils
 from dataset.utils import save_result
@@ -30,13 +29,17 @@ from optim import create_optimizer
 from vqaTools.vqaEval import VQAEval
 from vqaTools.vqa import VQA
 
-from ewc import EWC
 
 import wandb
 
-from sklearn.decomposition import PCA
 from matplotlib import pyplot as plt
+import plotly.graph_objects as go
 
+# dimension reductino for analyze
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+
+global_draw_count = 0
 
 def avg_distance(coords):
     total_dist = []
@@ -53,14 +56,15 @@ def avg_distance(coords):
     return sum(total_dist)/len(total_dist)
 
 words = ['is', 'what', 'have', 'why', 'where', 'how', 'are', 'can']
+global_task = ['a','b','c','d','e','f']
 
-def train_prompt(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device, scheduler, config, task, args, arg_opt, ewc):
+def train_prompt(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device, scheduler, config, task, args, arg_opt):
     model.eval()  
     
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     metric_logger.add_meter('loss', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
-
+    both_mod=True
     header = 'Train Epoch: [{}]'.format(epoch)
     print_freq = 50
     step_size = 100
@@ -72,32 +76,43 @@ def train_prompt(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, 
     total_image = None
     total_question = None
     print(" in train prompt")
-    for i,(image, question, answer, weights, n) in enumerate(data_loader):
-       
-        if i == 0:
-            total_image = image
-            total_question = question
-        else:
-            total_image = torch.cat([total_image,image],dim=0)
-            total_question.extend(question)
+
+    # store data for dimension reduction visualization
     
-    image, weights = image.to(device,non_blocking=True), weights.to(device,non_blocking=True)   
-        
-    question_input = tokenizer(question, padding='longest', truncation=True, max_length=25, return_tensors="pt").to(device) 
-
+    dataset = data_loader.dataset
+    data_len = len(dataset)
     
-    for i in range(10):
-        text_diff, img_diff = model.update_cluster(image,question_input,task)
 
-        total_text_diff = text_diff
-        total_img_diff = img_diff
 
-        print("image prompt different is " + str(total_img_diff) + " and text different is " + str(total_text_diff))
+    for epoch in range(50):
+
+        batch_sample = random.sample(range(0,data_len-1), 32)
+
+        images = []
+
+        questions = []
+
+        for i in batch_sample:
+
+            image, question, answer, weights = dataset[i]
+            image = image.to(device,non_blocking=True)  
+
+            images.append(image)
+            questions.extend(question)
+
+        images = torch.stack(images,dim=0)
+            
+        question_input = tokenizer(questions, padding='longest', truncation=True, max_length=25, return_tensors="pt").to(device) 
+
+        t_diff, i_diff = model.update_cluster(images,question_input,task,both_mod)
+
+        if epoch % 5 == 0:
+            print("image prompt different is " + str(i_diff) + " and text different is " + str(t_diff))
 
 
         
 
-def train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device, scheduler, config, task, args, arg_opt, ewc, replay_memory):
+def train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device, scheduler, config, task, args, arg_opt, prev_model, task_order):
     # train
     model.train()  
     model.to("cuda")
@@ -111,22 +126,18 @@ def train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device,
     warmup_iterations = warmup_steps*step_size  
     answer_list = data_loader.dataset.answer_list
 
+    data_pool_reduce_v = {}
+    data_pool_reduce_v[0] = []
+    data_pool_reduce_v[1] = []
+    data_pool_reduce_v[2] = []
+    data_pool_reduce_t = []
+
+
     for i,(image, question, answer, weights, n) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         
         image, weights = image.to(device,non_blocking=True), weights.to(device,non_blocking=True)   
         question_input = tokenizer(question, padding='longest', truncation=True, max_length=25, return_tensors="pt").to(device) 
         idxs = None
-        if args.cascade_prompt:
-            idxs = []
-            for q in question:
-                find = False
-                for w in words:
-                    if w in q:
-                        idxs.append(words.index(w))    
-                        find = True
-                        break
-                if not find:
-                    idxs.append(8)
 
         answer_input = tokenizer(answer, padding='longest', return_tensors="pt").to(device) 
         
@@ -134,23 +145,18 @@ def train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device,
             alpha = config['alpha']
         else:
             alpha = config['alpha']*min(1,i/len(data_loader))
-        loss, updated = model(image, question_input, answer_input, train=True, alpha=alpha, k=n, weights=weights, task=task, answer_gt=answer, answer_list=answer_list, word_idx = idxs)        
 
+        loss, updated = model(image, question_input, answer_input, train=True, alpha=alpha, k=n, weights=weights, task=task, answer_gt=answer, answer_list=answer_list, word_idx = idxs, reduce_pool=data_pool_reduce_v)        
 
-        if args.ER and task != 'a':
-            if (i + 1) % 100 == 0:
-                sampled_replay_task = replay_memory.sample_replay_task()
-                replay_loss = replay_memory.run_replay_step(task_key=sampled_replay_task, model=model, tokenizer=tokenizer, answer_list=answer_list, optimizer=optimizer)
-                loss += replay_loss
-        if ewc is not None:
-            ewc_loss = ewc.compute_ewc_loss(model)[1]
-            loss += ewc_loss * 0.1
+        if prev_model is not None:
+            prev_loss, _ = prev_model(image, question_input, answer_input, train=True, alpha=alpha, k=n, weights=weights, task=task, answer_gt=answer, answer_list=answer_list, word_idx = idxs) 
+            loss += prev_loss
+
         #update optimizer if new prompt added
         
         #optimizer = create_optimizer(arg_opt, model)
-
-        optimizer.zero_grad()
         loss.backward()
+
         optimizer.step()    
         #if updated:
         #    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu],find_unused_parameters=True)
@@ -162,6 +168,15 @@ def train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device,
         if epoch==0 and i%step_size==0 and i<=warmup_iterations: 
             scheduler.step(i//step_size) 
             
+    
+    if len(data_pool_reduce_v[0] ) > 0:
+        data_pool_reduce_v[0] = torch.cat(data_pool_reduce_v[0],dim=0)
+    if len(data_pool_reduce_v[1] ) > 0:
+        data_pool_reduce_v[1] = torch.cat(data_pool_reduce_v[1],dim=0)
+    if len(data_pool_reduce_v[2] ) > 0:
+        data_pool_reduce_v[2] = torch.cat(data_pool_reduce_v[2],dim=0)
+
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger.global_avg())     
@@ -192,17 +207,6 @@ def evaluation(model, data_loader, tokenizer, device, config, task, args) :
             question[i] = question[i] + 'Caption:' + samples['captions'][i][0]'''
 
         idxs = None
-        if args.cascade_prompt:
-            idxs = []
-            for q in question:
-                find = False
-                for w in words:
-                    if w in q:
-                        idxs.append(words.index(w))    
-                        find = True
-                        break
-                if not find:
-                    idxs.append(8)
 
         question_input = tokenizer(question, padding='longest', return_tensors="pt").to(device)  
 
@@ -235,17 +239,10 @@ def eval_accuracy(anno_file, ques_file, res_file):
 
 def main(args, config):
     #if args.distributed:
-    utils.init_distributed_mode(args)    
+    #utils.init_distributed_mode(args)    
     
     device = torch.device(args.device)
-
-    ewc = None
-    replay_memory = None
-    if args.ewc:
-        ewc = EWC()
-    if args.ER:
-        replay_memory = ExperienceReplayMemory()
-    print("cascade prompt is " + str(args.cascade_prompt))
+    
     # fix the seed for reproducibility
     seed = args.seed + utils.get_rank()
     torch.manual_seed(seed)
@@ -263,14 +260,15 @@ def main(args, config):
     #### Model #### 
     print("Creating model")
 
-    model = ALBEF(config=config, text_encoder=args.text_encoder, text_decoder=args.text_decoder, tokenizer=tokenizer, l2p=args.l2p, EG_prompt=args.EG_prompt, cascade_prompt=args.cascade_prompt, DualKeyPrompt=args.dual_key_prompt, Dual_Cluster=args.dual_cluster_prompt, ewc=ewc, Dual_Prompt=args.DualPrompt)
+    model = ALBEF(config=config, text_encoder=args.text_encoder, text_decoder=args.text_decoder, tokenizer=tokenizer, Dual_Cluster=args.dual_cluster_prompt)
     model = model.to(device)   
 
+   
 
     total_params = sum(p.numel() for p in model.text_decoder.cls.predictions.parameters())
 
     print(" the total parameter for cls is " + str(total_params))
-    if args.EG_prompt or args.dual_key_prompt or args.l2p or args.dual_cluster_prompt or args.DualPrompt:
+    if args.dual_cluster_prompt:
         print("freeze model")
         for name, param in model.named_parameters():
             if not 'text_decoder.cls.predictions' in name and not 'caption_model' in name:
@@ -287,35 +285,7 @@ def main(args, config):
         
         # reshape positional embedding to accomodate for image resolution change
         pos_embed_reshaped = interpolate_pos_embed(state_dict['visual_encoder.pos_embed'],model.visual_encoder)         
-        state_dict['visual_encoder.pos_embed'] = pos_embed_reshaped   
-        
-        if False:# not args.evaluate:
-            if config['distill']:
-                m_pos_embed_reshaped = interpolate_pos_embed(state_dict['visual_encoder_m.pos_embed'],model.visual_encoder_m)   
-                state_dict['visual_encoder_m.pos_embed'] = m_pos_embed_reshaped 
-                
-            for key in list(state_dict.keys()):
-                if 'bert' in key:
-                    encoder_key = key.replace('bert.','')         
-                    state_dict[encoder_key] = state_dict[key] 
-                # intialize text decoder as multimodal encoder (last 6 layers of model.text_encoder)    
-                if 'text_encoder' in key:                
-                    if 'layer' in key:
-                        encoder_keys = key.split('.')
-                        layer_num = int(encoder_keys[4])
-                        if layer_num<6:
-                            del state_dict[key]  
-                            continue
-                        else:
-                            decoder_layer_num = (layer_num-6)
-                            encoder_keys[4] = str(decoder_layer_num)
-                            encoder_key = '.'.join(encoder_keys)     
-                    else:
-                        encoder_key = key
-                    decoder_key = encoder_key.replace('text_encoder','text_decoder')  
-                    state_dict[decoder_key] = state_dict[key]     
-
-                    del state_dict[key]                
+        state_dict['visual_encoder.pos_embed'] = pos_embed_reshaped             
                 
         msg = model.load_state_dict(state_dict,strict=False)  
         print('load checkpoint from %s'%args.checkpoint)
@@ -341,20 +311,17 @@ def main(args, config):
     start_time = time.time()
 
     print("Creating vqa datasets")
-    datasets = create_dataset('clove_scene', config)   
+    datasets = create_dataset('clove_scene', config, args.order, args.data_root)   
     
     
-    subtasks=['a','b','c','d','e','f']
+    subtasks=list(args.order)
     test_loaders = []
     for t in range(len(subtasks)):
        
         sub_datasets = (datasets[0][t],datasets[1][t])
         
-        eWc = None
-        if args.ewc and t > 0:
-          eWc = model.ewc
-        else:
-            eWc = None
+        prev_model = None
+        
 
         if args.distributed:
             num_tasks = utils.get_world_size()
@@ -362,6 +329,8 @@ def main(args, config):
             samplers = create_sampler(sub_datasets, [True, False], num_tasks, global_rank)         
         else:
             samplers = [None, None]
+
+        
         
         train_loader, test_loader = create_loader(sub_datasets,samplers,
                                               batch_size=[config['batch_size_train'],config['batch_size_test']],
@@ -371,7 +340,7 @@ def main(args, config):
         test_loaders.append(test_loader)
        
         if args.dual_cluster_prompt:
-            train_prompt(model, train_loader, optimizer, tokenizer, None, warmup_steps, device, lr_scheduler, config, subtasks[t], args, arg_opt, eWc)
+            train_prompt(model, train_loader, optimizer, tokenizer, None, warmup_steps, device, lr_scheduler, config, subtasks[t], args, arg_opt)
         
         
         for epoch in range(start_epoch, max_epoch):
@@ -382,7 +351,7 @@ def main(args, config):
                 if args.distributed:
                     train_loader.sampler.set_epoch(epoch)
 
-                train_stats = train(model, train_loader, optimizer, tokenizer, epoch, warmup_steps, device, lr_scheduler, config, subtasks[t], args, arg_opt, eWc, replay_memory) 
+                train_stats = train(model, train_loader, optimizer, tokenizer, epoch, warmup_steps, device, lr_scheduler, config, subtasks[t], args, arg_opt, prev_model, subtasks) 
                
 
                 _,_ = evaluation(model, test_loader, tokenizer, device, config, subtasks[t],args)
@@ -411,36 +380,17 @@ def main(args, config):
                 dist.barrier()   
         # evaluate test based on all previous val dataset
 
-        if args.ewc and t < len(subtasks)-1:
+        # update previous cls for distillatoin use
+        model.update_prev_cls()
 
-            eWc=model.ewc
-            eWc.save_task_parameters(task_key=subtasks[t],
-                                        model=model,
-                                        optimizer=optimizer,
-                                        dataloader=train_loader,
-                                        tokenizer=tokenizer
-            )
+       
 
-        if args.ER:
-            replay_memory.add_task_memory_buffer(args=args,
-                                                task_key=subtasks[t],
-                                                train_dataset=train_loader.dataset,
-                                                memory_percentage=0.01,
-                                                sampling_strategy='random')
 
 
         if args.distributed:
             model.module.EG_classifiers[subtasks[t]] = copy.deepcopy(model.module.text_decoder.cls)
         else:
             model.EG_classifiers[subtasks[t]] = copy.deepcopy(model.text_decoder.cls)
-
-
-        if args.EG_prompt:
-           
-            for _, param in model.module.Prompt_E[subtasks[t]].named_parameters():
-                param.require_grad = False
-            for _, param in model.module.EG_classifiers[subtasks[t]].named_parameters():
-                param.require_grad = False
 
         if args.distributed:
             model.module.EG_classifiers[subtasks[t]] = copy.deepcopy(model.module.text_decoder.cls)
@@ -463,7 +413,7 @@ def main(args, config):
 
                 train_loader, test_loader = create_loader(sub_task,samplers,
                                               batch_size=[config['batch_size_train'],config['batch_size_test']],
-                                              num_workers=[4,4],is_trains=[True, False], 
+                                              num_workers=[0,0],is_trains=[True, False], 
                                               collate_fns=[vqa_collate_fn,None]) 
 
                 vqa_result, acc = evaluation(model, test_loader, tokenizer, device, config, subtasks[task],args)   
@@ -496,15 +446,10 @@ if __name__ == '__main__':
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')    
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
-    parser.add_argument('--distributed', default=True, type=bool)
-    parser.add_argument('--l2p', default=False, type=bool) #l2p type of prmompt
-    parser.add_argument('--EG_prompt', default=False, type=bool) #genral prompt + specific prmopt
-    parser.add_argument('--cascade_prompt', default=False, type=bool) # prompt of word followed by img 
-    parser.add_argument('--dual_key_prompt', default=False, type=bool) # prompt for dual key prompt
+    parser.add_argument('--distributed', default=False, type=bool)
     parser.add_argument('--dual_cluster_prompt', default=False, type=bool) # propmt for dual key with clustering
-    parser.add_argument('--ewc', default=False, type=bool) # use ewc or not
-    parser.add_argument('--ER', default=False, type=bool)
-    parser.add_argument('--DualPrompt', default=False, type=bool)
+    parser.add_argument('--order', default='abcdef')
+    parser.add_argument('--data_root', default='')
     args = parser.parse_args()
 
     yaml = YAML(typ='rt')

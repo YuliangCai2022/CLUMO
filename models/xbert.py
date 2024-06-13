@@ -1229,6 +1229,7 @@ class BertLMHeadModel(BertPreTrainedModel):
         classifiers=None,
         classifier_idx=None,
         CL_method=None,
+        prev_cls=None
     ):
         r"""
         encoder_hidden_states  (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length, hidden_size)`, `optional`):
@@ -1301,7 +1302,7 @@ class BertLMHeadModel(BertPreTrainedModel):
         #    prediction_scores = classifiers[classifier_idx](sequence_output)
         #else:
         prediction_scores = self.cls(sequence_output)
-
+        
         
         if return_logits:
             return prediction_scores[:, :-1, :].contiguous()  
@@ -1323,6 +1324,14 @@ class BertLMHeadModel(BertPreTrainedModel):
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
             return ((lm_loss,) + output) if lm_loss is not None else output
+
+        if prev_cls is not None:
+            prev_prediction_scores = prev_cls(sequence_output)
+
+            distill_creterion = nn.MSELoss()
+            distill_loss = distill_creterion(prediction_scores,prev_prediction_scores)
+
+            return distill_loss
 
         return CausalLMOutputWithCrossAttentions(
             loss=lm_loss,

@@ -12,7 +12,7 @@ from dataset.grounding_dataset import grounding_dataset
 
 from dataset.randaugment import RandomAugment
 
-def create_dataset(dataset, config):
+def create_dataset(dataset, config, order, root):
     
     normalize = transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
     
@@ -56,12 +56,11 @@ def create_dataset(dataset, config):
     elif dataset=='clove_scene':
         train_dataset = []
         test_dataset = []
-        vqa_root = '/project/rostamim_919/caiyulia/LAVIS_Modified/cache/coco/images/'
-        vg_root = '/root/CLOVE/image/'
-        task = ['a','b','c','d','e','f']
+        data_root = root
+        task = list(order)
         for t in task:
-            train_dataset.append(clove_dataset(config['train_file'], train_transform, vqa_root, vg_root, split='train',SorF='s', sub_data=t, answer_list=config['answer_list']))
-            test_dataset.append(clove_dataset(config['test_file'], test_transform, vqa_root, vg_root, split='test', answer_list=config['answer_list'],SorF='s', sub_data=t))
+            train_dataset.append(clove_dataset(config['train_file'], train_transform, data_root, split='train',SorF='s', sub_data=t, answer_list=config['answer_list']))
+            test_dataset.append(clove_dataset(config['test_file'], test_transform, data_root, split='test', answer_list=config['answer_list'],SorF='s', sub_data=t))
         return train_dataset, test_dataset
 
     elif dataset=='nlvr':   

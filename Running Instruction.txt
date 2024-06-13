@@ -1,0 +1,27 @@
+1. Environment Setup
+    conda env create -f environment.yml
+
+2. Download Pre-trained model
+    'https://storage.googleapis.com/sfr-vision-language-research/LAVIS/models/ALBEF/albef_vqav2_lavis.pt'
+
+3. Download dataset from:
+    https://github.com/showlab/CLVQA
+
+4. Form dataset folder
+    -CLOVE
+        -json
+            -function
+            -scene
+    -textvqa 
+    -vg
+        -image
+    -answer_list.json
+
+5. Run the command
+    python CLOVE.py \
+        --config ./configs/VQA.yaml \
+        --output_dir output/vqa \
+        --checkpoint albef_vqav2_lavis.pt \
+        --order abcdef \
+        --dual_cluster_prompt True \
+        --data_root [your path to /CLOVE dataset eg. .../.../CLOVE/]

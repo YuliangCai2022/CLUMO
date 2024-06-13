@@ -7,22 +7,22 @@ from dataset.utils import pre_question
 
 
 class clove_dataset(Dataset):
-    def __init__(self, ann_file, transform, vqa_root, vg_root, eos='[SEP]', split="train", max_ques_words=30, answer_list='', SorF='s', sub_data='a'):
+    def __init__(self, ann_file, transform, root, eos='[SEP]', split="train", max_ques_words=30, answer_list='', SorF='s', sub_data='a'):
         sub_task_s = dict()
-        sub_task_s['a'] = 'scene/scene_a#ShopAndDining_'
-        sub_task_s['b'] = 'scene/scene_b#Workplace_'
-        sub_task_s['c'] = 'scene/scene_c#HomeOrHotel_'
-        sub_task_s['d'] = 'scene/scene_d#Transportation_'
-        sub_task_s['e'] = 'scene/scene_e#SportAndLeisure_'
-        sub_task_s['f'] = 'scene/scene_f#Outdoors_'
+        sub_task_s['a'] = 'json/scene/scene_a#ShopAndDining_'
+        sub_task_s['b'] = 'json/scene/scene_b#Workplace_'
+        sub_task_s['c'] = 'json/scene/scene_c#HomeOrHotel_'
+        sub_task_s['d'] = 'json/scene/scene_d#Transportation_'
+        sub_task_s['e'] = 'json/scene/scene_e#SportAndLeisure_'
+        sub_task_s['f'] = 'json/scene/scene_f#Outdoors_'
 
         sub_task_f = dict()
-        sub_task_f['a'] = 'funcion/functional_attribute_'
-        sub_task_f['b'] = 'function/functional_knowledge_'
-        sub_task_f['c'] = 'function/functional_logical_'
-        sub_task_f['d'] = 'function/functional_object_'
-        sub_task_f['e'] = 'function/functional_relation_'
-        sub_task_f['f'] = 'function/functional_scenetext_'
+        sub_task_f['a'] = 'json/function/functional_attribute_'
+        sub_task_f['b'] = 'json/function/functional_knowledge_'
+        sub_task_f['c'] = 'json/function/functional_logical_'
+        sub_task_f['d'] = 'json/function/functional_object_'
+        sub_task_f['e'] = 'json/function/functional_relation_'
+        sub_task_f['f'] = 'json/function/functional_scenetext_'
 
         if split == 'test':
             split='val'
@@ -33,7 +33,8 @@ class clove_dataset(Dataset):
         if SorF == 'f':
             ann_file = sub_task_f[sub_data] + split + '.json'
 
-        path = '/root/CLOVE/json/'
+        #path = '/project/rostamim_919/caiyulia/data/CLOVE/'
+        path = root
         ann_file = path + ann_file
 
         self.split = split        
@@ -42,12 +43,12 @@ class clove_dataset(Dataset):
         self.ann = json.load(open(ann_file,'r'))
 
         self.transform = transform
-        self.vqa_root = vqa_root
-        self.vg_root = vg_root
+        self.vg_root = path + 'vg/image'
+        self.textvqa_root = path + 'textvqa'
         self.max_ques_words = max_ques_words
         self.eos = eos
         
-        answer_list = '/root/CLOVE/json/answer_list.json'
+        answer_list = path + 'answer_list.json'
         if split=='test' or split=='val':
             self.max_ques_words = 50 # do not limit question length during test
         self.answer_list = json.load(open(answer_list,'r'))    
@@ -60,10 +61,10 @@ class clove_dataset(Dataset):
         
         ann = self.ann[index]
         
-        if ann['image_source']=='vqa':
-            image_path = os.path.join(self.vqa_root,ann['image_id']+'.jpg')    
-        elif ann['image_source']=='vg':
+        if ann['image_source']=='vg':
             image_path = os.path.join(self.vg_root,ann['image_id']+'.jpg')  
+        elif ann['image_source']=='textvqa':
+            image_path = os.path.join(self.textvqa_root,ann['image_id']+'.jpg')  
             
         image = Image.open(image_path).convert('RGB')   
         image = self.transform(image)          
@@ -91,7 +92,7 @@ class clove_dataset(Dataset):
                 answers = list(answer_weight.keys())
                 weights = list(answer_weight.values())
 
-            elif ann['image_source']=='vg':
+            elif ann['image_source']=='vg' or ann['image_source']=='textvqa':
                 answers = [ann['answers']][0]
                 weights = [0.1] * 10  
 
